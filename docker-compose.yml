@@ -1,0 +1,24 @@
+cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  timecard-app:
+    build: .
+    ports:
+      - "952:952"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./processed:/app/processed
+    environment:
+      - FLASK_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:952/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  uploads:
+  processed:
+EOF

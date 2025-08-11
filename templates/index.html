@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>打卡数据处理系统</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕐</text></svg>">
+    <style>
+        body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }
+        .container { background: white; border-radius: 20px; box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1); padding: 40px; max-width: 1000px; width: 95%; }
+        .title { text-align: center; color: #333; margin-bottom: 30px; font-size: 2.5em; font-weight: bold; }
+        .step { margin-bottom: 30px; padding: 20px; border: 2px solid #e1e5e9; border-radius: 10px; transition: all 0.3s ease; }
+        .step.active { border-color: #667eea; background: #f8f9ff; }
+        .step.completed { border-color: #28a745; background: #f8fff9; }
+        .step-title { font-size: 1.3em; font-weight: bold; color: #333; margin-bottom: 15px; display: flex; align-items: center; }
+        .step-number { background: #667eea; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 10px; font-weight: bold; }
+        .completed .step-number { background: #28a745; }
+        .btn { background: #667eea; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 16px; transition: all 0.3s ease; margin-right: 10px; }
+        .btn:hover { background: #5a6fd8; transform: translateY(-2px); }
+        .btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+        .btn.success { background: #28a745; }
+        .btn.warning { background: #ffc107; color: #333; }
+        .file-label { display: inline-block; padding: 12px 24px; background: #667eea; color: white; border-radius: 8px; cursor: pointer; transition: background 0.3s ease; }
+        .file-label:hover { background: #5a6fd8; }
+        input[type="file"] { display: none; }
+        .result { margin-top: 15px; padding: 15px; border-radius: 8px; display: none; }
+        .result.success { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .result.error { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .loading { display: none; text-align: center; margin: 15px 0; }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .file-info { margin-top: 10px; padding: 10px; background: #e9ecef; border-radius: 5px; display: none; }
+        .download-area { margin-top: 20px; text-align: center; }
+        .error-details { max-height: 300px; overflow-y: auto; margin-top: 10px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px; font-size: 0.9em; }
+        .error-item { margin: 5px 0; padding: 3px 0; border-bottom: 1px solid #ddd; }
+        .summary-box { background: #e7f3ff; border: 1px solid #b8daff; border-radius: 5px; padding: 15px; margin: 10px 0; }
+        .summary-item { display: inline-block; margin: 5px 15px 5px 0; font-weight: bold; }
+        .icon { margin-right: 8px; }
+        .collapsible { cursor: pointer; padding: 10px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; margin: 5px 0; }
+        .collapsible:hover { background: #e9ecef; }
+        .content { display: none; padding: 15px; border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 5px 5px; }
+        .step-options { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">🕐 打卡数据处理系统</h1>
+
+        <div class="step active" id="step1">
+            <div class="step-title">
+                <span class="step-number">1</span>
+                上传Timecard文件
+            </div>
+            <div>
+                <label for="file" class="file-label">📁 选择Excel文件</label>
+                <input type="file" id="file" accept=".xlsx,.xls">
+                <div class="file-info" id="fileInfo"></div>
+            </div>
+            <button class="btn" id="uploadBtn" onclick="uploadFile()" disabled>上传文件</button>
+            <div class="loading" id="uploadLoading"><div class="spinner"></div><div>正在上传...</div></div>
+            <div class="result" id="uploadResult"></div>
+        </div>
+
+        <div class="step" id="step2">
+            <div class="step-title">
+                <span class="step-number">2</span>
+                数据预处理与错误检测
+            </div>
+            <p>提取员工打卡数据，检测时间格式错误，生成高亮标记的错误检查表</p>
+            <div class="step-options">
+                <button class="btn" id="step1Btn" onclick="processStep1()" disabled>开始预处理</button>
+                <button class="btn warning" id="uploadErrorBtn" onclick="uploadErrorFile()" disabled>上传修改后的错误表格</button>
+            </div>
+            <div class="loading" id="step1Loading"><div class="spinner"></div><div>正在处理...</div></div>
+            <div class="result" id="step1Result"></div>
+        </div>
+
+        <div class="step" id="step3">
+            <div class="step-title">
+                <span class="step-number">3</span>
+                工时计算与考勤分析
+            </div>
+            <p>计算工作时间、加班时间，检测迟到早退，生成完整的考勤报告</p>
+            <button class="btn" id="step2Btn" onclick="processStep2()" disabled>生成报告</button>
+            <div class="loading" id="step2Loading"><div class="spinner"></div><div>正在生成...</div></div>
+            <div class="result" id="step2Result"></div>
+        </div>
+
+        <div class="step" id="step4">
+            <div class="step-title">
+                <span class="step-number">4</span>
+                下载结果文件
+            </div>
+            <div class="download-area" id="downloadArea" style="display: none;">
+                <button class="btn success" id="downloadErrorBtn" onclick="downloadFile()" style="display: none;">📥 下载错误检查表</button>
+                <button class="btn success" id="downloadFinalBtn" onclick="downloadFinalFile()" style="display: none;">📊 下载最终报告</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        let uploadedFilename = '', timeRange = '', errorFilename = '', finalFilename = '';
+
+        document.getElementById('file').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('fileInfo').innerHTML = '<strong>已选择:</strong> ' + file.name + '<br><strong>大小:</strong> ' + (file.size / 1024 / 1024).toFixed(2) + ' MB';
+                document.getElementById('fileInfo').style.display = 'block';
+                document.getElementById('uploadBtn').disabled = false;
+            }
+        });
+
+        async function uploadFile() {
+            const file = document.getElementById('file').files[0];
+            if (!file) { alert('请选择文件'); return; }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            showLoading('uploadLoading');
+            try {
+                const response = await fetch(API_BASE + '/upload', { method: 'POST', body: formData });
+                const result = await response.json();
+                hideLoading('uploadLoading');
+
+                if (result.success) {
+                    uploadedFilename = result.filename;
+                    showResult('uploadResult', '文件上传成功！', 'success');
+                    completeStep('step1');
+                    activateStep('step2');
+                    document.getElementById('step1Btn').disabled = false;
+                } else {
+                    showResult('uploadResult', '上传失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                hideLoading('uploadLoading');
+                showResult('uploadResult', '上传失败: ' + error.message, 'error');
+            }
+        }
+
+        async function processStep1() {
+            showLoading('step1Loading');
+            try {
+                const response = await fetch(API_BASE + '/process/step1', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: uploadedFilename })
+                });
+                const result = await response.json();
+                hideLoading('step1Loading');
+
+                if (result.success) {
+                    timeRange = result.time_range;
+                    errorFilename = result.output_file;
+
+                    let message = '<div class="summary-box">' +
+                        '<div class="summary-item">👥 员工数量: ' + result.employee_count + '</div>' +
+                        '<div class="summary-item">📅 时间范围: ' + timeRange + '</div>' +
+                        '<div class="summary-item">🔍 错误数量: ' + result.error_count + '</div>' +
+                        '<div class="summary-item">⚠️ 高亮单元格: ' + result.total_highlighted + '</div>' +
+                        '</div>';
+
+                    if (result.error_details && result.error_details.length > 0) {
+                        message += '<div class="collapsible" onclick="toggleContent(\'errorDetails1\')">📋 错误详情 (点击展开)</div>' +
+                            '<div id="errorDetails1" class="content">' +
+                            '<div class="error-details">';
+                        result.error_details.forEach(function(detail) {
+                            message += '<div class="error-item">• ' + detail + '</div>';
+                        });
+                        message += '</div></div>';
+                    }
+
+                    message += '<br><strong>💡 提示：</strong>您可以下载错误检查表，修改后重新上传，或者直接继续下一步。';
+
+                    showResult('step1Result', message, 'success');
+                    document.getElementById('uploadErrorBtn').disabled = false;
+                    document.getElementById('step2Btn').disabled = false;
+                    document.getElementById('downloadErrorBtn').style.display = 'inline-block';
+                    document.getElementById('downloadArea').style.display = 'block';
+                } else {
+                    showResult('step1Result', '处理失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                hideLoading('step1Loading');
+                showResult('step1Result', '处理失败: ' + error.message, 'error');
+            }
+        }
+
+        async function uploadErrorFile() {
+            // 创建文件输入元素
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.xlsx,.xls';
+            fileInput.style.display = 'none';
+            
+            fileInput.onchange = async function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('time_range', timeRange);
+
+                showLoading('step1Loading');
+                try {
+                    const response = await fetch(API_BASE + '/upload/error', { method: 'POST', body: formData });
+                    const result = await response.json();
+                    hideLoading('step1Loading');
+
+                    if (result.success) {
+                        errorFilename = result.filename;
+                        showResult('step1Result', '修改后的错误表格上传成功！现在可以继续下一步。', 'success');
+                        document.getElementById('step2Btn').disabled = false;
+                    } else {
+                        showResult('step1Result', '上传失败: ' + result.error, 'error');
+                    }
+                } catch (error) {
+                    hideLoading('step1Loading');
+                    showResult('step1Result', '上传失败: ' + error.message, 'error');
+                }
+            };
+
+            document.body.appendChild(fileInput);
+            fileInput.click();
+            document.body.removeChild(fileInput);
+        }
+
+        async function processStep2() {
+            showLoading('step2Loading');
+            try {
+                const response = await fetch(API_BASE + '/process/step2', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ error_filename: errorFilename, time_range: timeRange })
+                });
+                const result = await response.json();
+                hideLoading('step2Loading');
+
+                if (result.success) {
+                    finalFilename = result.output_file;
+
+                    let message = '<div class="summary-box">' +
+                        '<div class="summary-item">👥 处理员工: ' + result.employee_count + '</div>' +
+                        '<div class="summary-item">⏰ 总工时: ' + (result.total_working_hours ? result.total_working_hours.toFixed(1) : 0) + 'h</div>' +
+                        '<div class="summary-item">🔄 加班时间: ' + (result.total_overtime ? result.total_overtime.toFixed(1) : 0) + 'h</div>' +
+                        '<div class="summary-item">🔥 问题数据: ' + result.problematic_cells_count + '</div>' +
+                        '</div>';
+
+                    if (result.attendance_summary) {
+                        message += '<div class="summary-box">' +
+                            '<div class="summary-item" style="color: #dc3545;">🐌 迟到: ' + result.attendance_summary.late_count + '次</div>' +
+                            '<div class="summary-item" style="color: #fd7e14;">🍽️ 中午不打卡: ' + result.attendance_summary.no_lunch_count + '次</div>' +
+                            '<div class="summary-item" style="color: #6f42c1;">🏃 早退: ' + result.attendance_summary.early_leave_count + '次</div>' +
+                            '</div>';
+                    }
+
+                    message += '<br><strong>📊 Excel文件包含4个工作表：</strong><br>' +
+                        '• 时间汇总：原始打卡时间 + 计算工时 + 统计数据<br>' +
+                        '• 迟到：标红迟到记录<br>' +
+                        '• 中午不打卡：标红中午不打卡记录<br>' +
+                        '• 早退：标红早退记录<br><br>' +
+                        '<strong>🎨 颜色说明：</strong><br>' +
+                        '• 🟡 黄色：工时统计列<br>' +
+                        '• 🔴 浅红色：迟到/早退/中午不打卡<br>' +
+                        '• 🔥 深红色：有问题的时间数据 (需要人工确认)<br>' +
+                        '• 🟢 绿色：假期列';
+
+                    showResult('step2Result', message, 'success');
+                    completeStep('step3');
+                    completeStep('step4');
+                    document.getElementById('downloadFinalBtn').style.display = 'inline-block';
+                } else {
+                    showResult('step2Result', '处理失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                hideLoading('step2Loading');
+                showResult('step2Result', '处理失败: ' + error.message, 'error');
+            }
+        }
+
+        function downloadFile() {
+            if (errorFilename) window.open(API_BASE + '/download/' + errorFilename, '_blank');
+        }
+
+        function downloadFinalFile() {
+            if (finalFilename) window.open(API_BASE + '/download/' + finalFilename, '_blank');
+        }
+
+        function toggleContent(id) {
+            const content = document.getElementById(id);
+            content.style.display = content.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function showLoading(id) { document.getElementById(id).style.display = 'block'; }
+        function hideLoading(id) { document.getElementById(id).style.display = 'none'; }
+        function showResult(id, message, type) {
+            const element = document.getElementById(id);
+            element.innerHTML = message;
+            element.className = 'result ' + type;
+            element.style.display = 'block';
+        }
+        function activateStep(stepId) { document.getElementById(stepId).classList.add('active'); }
+        function completeStep(stepId) {
+            const step = document.getElementById(stepId);
+            step.classList.remove('active');
+            step.classList.add('completed');
+        }
+    </script>
+</body>
+</html> 
