@@ -251,6 +251,7 @@ class TimecardProcessor:
             # 记录有问题的数据
             problematic_data = []
             problematic_cells = []
+            anomaly_details = {}  # 新增：保存异常详细信息
             processing_stats = {
                 'total_cells': 0,
                 'valid_cells': 0,
@@ -271,6 +272,9 @@ class TimecardProcessor:
                     raw_time_str = str(df.iloc[i, j + 1])
                     print(f"🔍 处理: 员工 {employee_name}, 列 {j + 1}, 原始数据: '{raw_time_str}'")
 
+                    # 检测异常（包括Step1中的异常类型）
+                    anomalies = detect_time_anomalies(raw_time_str, employee_name, j + 1)
+                    
                     # 使用增强的时间解析
                     time_list = parse_time_string(raw_time_str)
 
@@ -280,6 +284,15 @@ class TimecardProcessor:
                         problematic_cells.append((i, j + 1))
                         df_new.iloc[i, j + 1] = 0
                         processing_stats['invalid_cells'] += 1
+                        
+                        # 记录异常详情
+                        anomaly_details[f"{i}_{j + 1}"] = {
+                            'type': 'parse_error',
+                            'description': '无法解析时间',
+                            'raw_value': raw_time_str,
+                            'employee': employee_name,
+                            'column': j + 1
+                        }
                         continue
 
                     # 验证和规范化时间
@@ -288,16 +301,45 @@ class TimecardProcessor:
                     # 使用增强的工时计算
                     work_result = calculate_working_hours_with_details(time_list_normalized)
 
+                    # 确定异常类型
+                    anomaly_type = None
+                    anomaly_description = ""
+                    
+                    # 优先使用检测到的异常
+                    if anomalies:
+                        anomaly_type = anomalies[0]['type']
+                        anomaly_description = anomalies[0]['description']
+                    elif not work_result['is_valid']:
+                        anomaly_type = 'calculation_error'
+                        anomaly_description = work_result['error']
+                    elif work_result['total_hours'] == 0:
+                        anomaly_type = 'zero_hours'
+                        anomaly_description = '工时为零'
+                    elif work_result['total_hours'] > 12:
+                        anomaly_type = 'long_work_span'
+                        anomaly_description = f'工作时间异常长 ({work_result["total_hours"]}h)'
+
                     if work_result['is_valid']:
                         df_new.iloc[i, j + 1] = work_result['total_hours']
                         processing_stats['valid_cells'] += 1
 
-                        # 记录工作时段详情（可选）
-                        if work_result['total_hours'] > 12:  # 超过12小时工作时间的警告
+                        # 如果有异常，记录到问题数据中
+                        if anomaly_type:
                             problematic_data.append(
-                                f"工作时间异常长 - 员工: {employee_name}, 列: {j + 1}, "
-                                f"工时: {work_result['total_hours']}h, 时段: {work_result['work_periods']}"
+                                f"{anomaly_description} - 员工: {employee_name}, 列: {j + 1}, "
+                                f"工时: {work_result['total_hours']}h, 原始: {raw_time_str}"
                             )
+                            problematic_cells.append((i, j + 1))
+                            
+                            # 记录异常详情
+                            anomaly_details[f"{i}_{j + 1}"] = {
+                                'type': anomaly_type,
+                                'description': anomaly_description,
+                                'raw_value': raw_time_str,
+                                'employee': employee_name,
+                                'column': j + 1,
+                                'work_hours': work_result['total_hours']
+                            }
                     else:
                         problematic_data.append(
                             f"{work_result['error']} - 员工: {employee_name}, 列: {j + 1}, "
@@ -306,6 +348,15 @@ class TimecardProcessor:
                         problematic_cells.append((i, j + 1))
                         df_new.iloc[i, j + 1] = 0
                         processing_stats['invalid_cells'] += 1
+                        
+                        # 记录异常详情
+                        anomaly_details[f"{i}_{j + 1}"] = {
+                            'type': 'calculation_error',
+                            'description': work_result['error'],
+                            'raw_value': raw_time_str,
+                            'employee': employee_name,
+                            'column': j + 1
+                        }
 
                     if df_new.iloc[i, j + 1] == 0:
                         processing_stats['zero_hour_cells'] += 1
@@ -386,7 +437,7 @@ class TimecardProcessor:
             print("📋 生成Excel报告...")
             self._create_excel_report_enhanced(df_final, df_original_for_display, attendance_result,
                                                problematic_cells, original_date_cols, output_path,
-                                               holiday_result, processing_stats)
+                                               holiday_result, processing_stats, anomaly_details)
 
             print(f"✅ Step2处理完成")
             print(f"📊 最终统计:")
@@ -541,7 +592,7 @@ class TimecardProcessor:
 
     def _create_excel_report_enhanced(self, df_final, df_original_for_display, attendance_result,
                                       problematic_cells, original_date_cols, output_path,
-                                      holiday_result, processing_stats):
+                                      holiday_result, processing_stats, anomaly_details):
         """创建增强的Excel报告"""
         workbook = Workbook()
         workbook.remove(workbook.active)
@@ -578,13 +629,13 @@ class TimecardProcessor:
 
         # 应用样式
         self._apply_enhanced_styles(workbook, df_final, attendance_result, problematic_cells,
-                                    original_date_cols, holiday_result)
+                                    original_date_cols, holiday_result, anomaly_details)
 
         workbook.save(output_path)
         workbook.close()
 
     def _apply_enhanced_styles(self, workbook, df_final, attendance_result, problematic_cells,
-                               original_date_cols, holiday_result):
+                               original_date_cols, holiday_result, anomaly_details):
         """应用增强的样式，支持不同异常类型的颜色区分"""
         # 定义颜色
         yellow_fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
@@ -600,7 +651,9 @@ class TimecardProcessor:
             'time_sequence_error': 'FF8C00', # 深橙色
             'invalid_time_format': 'FF6B6B', # 橙红色
             'parse_error': '9932CC',         # 紫色
-            'mixed_separators': '87CEEB'     # 天蓝色
+            'mixed_separators': '87CEEB',    # 天蓝色
+            'calculation_error': 'FF4500',   # 橙红色
+            'zero_hours': 'FFB6C1'          # 浅粉色
         }
 
         # 时间汇总工作表样式
@@ -616,16 +669,36 @@ class TimecardProcessor:
         # 为问题数据应用不同颜色的高亮
         for row_idx, col_idx in problematic_cells:
             if col_idx <= original_date_cols:
-                # 这里可以根据具体的异常类型应用不同颜色
-                # 由于Step2中可能没有详细的异常类型信息，使用默认的深红色
-                problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
-                cell = sheet1.cell(row=row_idx + 2, column=col_idx + 1)
-                cell.fill = problem_fill
-                
-                # 添加注释说明这是问题数据
-                if not cell.comment:
-                    from openpyxl.comments import Comment
-                    cell.comment = Comment("问题数据 - 需要人工确认", "系统检测")
+                # 获取异常详情
+                anomaly_key = f"{row_idx}_{col_idx}"
+                if anomaly_key in anomaly_details:
+                    anomaly_info = anomaly_details[anomaly_key]
+                    anomaly_type = anomaly_info['type']
+                    
+                    # 根据异常类型选择颜色
+                    if anomaly_type in anomaly_colors:
+                        color = anomaly_colors[anomaly_type]
+                    else:
+                        color = 'FF0000'  # 默认深红色
+                    
+                    problem_fill = PatternFill(start_color=color, end_color=color, fill_type='solid')
+                    cell = sheet1.cell(row=row_idx + 2, column=col_idx + 1)
+                    cell.fill = problem_fill
+                    
+                    # 添加注释说明异常类型
+                    if not cell.comment:
+                        from openpyxl.comments import Comment
+                        comment_text = f"异常类型: {anomaly_type}\n{anomaly_info['description']}\n员工: {anomaly_info['employee']}"
+                        cell.comment = Comment(comment_text, "系统检测")
+                else:
+                    # 没有详细异常信息，使用默认颜色
+                    problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
+                    cell = sheet1.cell(row=row_idx + 2, column=col_idx + 1)
+                    cell.fill = problem_fill
+                    
+                    if not cell.comment:
+                        from openpyxl.comments import Comment
+                        cell.comment = Comment("问题数据 - 需要人工确认", "系统检测")
 
         # 其他工作表样式
         for sheet_name, highlight_cols in [("迟到", attendance_result['highlight_cols_m']),
@@ -651,9 +724,24 @@ class TimecardProcessor:
             # 为问题数据应用高亮
             for row_idx, col_idx in problematic_cells:
                 if col_idx <= len(highlight_cols):
-                    problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
-                    cell = sheet.cell(row=row_idx + 2, column=col_idx + 1)
-                    cell.fill = problem_fill
+                    # 获取异常详情
+                    anomaly_key = f"{row_idx}_{col_idx}"
+                    if anomaly_key in anomaly_details:
+                        anomaly_info = anomaly_details[anomaly_key]
+                        anomaly_type = anomaly_info['type']
+                        
+                        if anomaly_type in anomaly_colors:
+                            color = anomaly_colors[anomaly_type]
+                        else:
+                            color = 'FF0000'
+                        
+                        problem_fill = PatternFill(start_color=color, end_color=color, fill_type='solid')
+                        cell = sheet.cell(row=row_idx + 2, column=col_idx + 1)
+                        cell.fill = problem_fill
+                    else:
+                        problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
+                        cell = sheet.cell(row=row_idx + 2, column=col_idx + 1)
+                        cell.fill = problem_fill
 
         # 处理日志工作表样式
         log_sheet = workbook["处理日志"]
@@ -673,12 +761,32 @@ class TimecardProcessor:
             ["时间格式无效", "橙红色 - 格式不符合标准"],
             ["解析错误", "紫色 - 无法解析的数据"],
             ["混合分隔符", "天蓝色 - 多种分隔符混用"],
-            ["工作时间跨度异常", "金色 - 工作时间过长"]
+            ["工作时间跨度异常", "金色 - 工作时间过长"],
+            ["计算错误", "橙红色 - 工时计算失败"],
+            ["零工时", "浅粉色 - 工时为零"]
         ]
         
         for i, (anomaly_type, description) in enumerate(legend_data, 1):
             log_sheet.cell(row=anomaly_legend_row + i, column=1, value=anomaly_type)
             log_sheet.cell(row=anomaly_legend_row + i, column=2, value=description)
+
+        # 添加异常统计信息
+        if anomaly_details:
+            stats_row = anomaly_legend_row + len(legend_data) + 2
+            log_sheet.cell(row=stats_row, column=1, value="异常处理统计").fill = log_header_fill
+            log_sheet.cell(row=stats_row, column=2, value="").fill = log_header_fill
+            
+            # 统计各类型异常数量
+            anomaly_stats = {}
+            for anomaly_info in anomaly_details.values():
+                anomaly_type = anomaly_info['type']
+                if anomaly_type not in anomaly_stats:
+                    anomaly_stats[anomaly_type] = 0
+                anomaly_stats[anomaly_type] += 1
+            
+            for i, (anomaly_type, count) in enumerate(anomaly_stats.items(), 1):
+                log_sheet.cell(row=stats_row + i, column=1, value=f"{anomaly_type}")
+                log_sheet.cell(row=stats_row + i, column=2, value=count)
 
         # 自动调整列宽
         for sheet in workbook.worksheets:
