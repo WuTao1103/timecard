@@ -171,6 +171,19 @@
                         message += '</div></div>';
                     }
 
+                    // 添加异常类型颜色说明
+                    message += '<div class="collapsible" onclick="toggleContent(\'colorLegend1\')">🎨 异常类型颜色说明 (点击展开)</div>' +
+                        '<div id="colorLegend1" class="content">' +
+                        '<div class="error-details">' +
+                        '<div class="error-item"><span style="background-color: #FFC7CE; padding: 2px 6px; border-radius: 3px; margin-right: 8px;">浅红色</span>冒号距离异常 - 时间格式问题</div>' +
+                        '<div class="error-item"><span style="background-color: #FF0000; padding: 2px 6px; border-radius: 3px; margin-right: 8px; color: white;">深红色</span>奇数时间记录 - 打卡次数不匹配</div>' +
+                        '<div class="error-item"><span style="background-color: #FF8C00; padding: 2px 6px; border-radius: 3px; margin-right: 8px; color: white;">深橙色</span>时间顺序错误 - 时间顺序混乱</div>' +
+                        '<div class="error-item"><span style="background-color: #FF6B6B; padding: 2px 6px; border-radius: 3px; margin-right: 8px; color: white;">橙红色</span>时间格式无效 - 格式不符合标准</div>' +
+                        '<div class="error-item"><span style="background-color: #9932CC; padding: 2px 6px; border-radius: 3px; margin-right: 8px; color: white;">紫色</span>解析错误 - 无法解析的数据</div>' +
+                        '<div class="error-item"><span style="background-color: #87CEEB; padding: 2px 6px; border-radius: 3px; margin-right: 8px;">天蓝色</span>混合分隔符 - 多种分隔符混用</div>' +
+                        '<div class="error-item"><span style="background-color: #FFD700; padding: 2px 6px; border-radius: 3px; margin-right: 8px;">金色</span>工作时间跨度异常 - 工作时间过长</div>' +
+                        '</div></div>';
+
                     message += '<br><strong>💡 提示：</strong>您可以下载错误检查表，修改后重新上传，或者直接继续下一步。';
 
                     showResult('step1Result', message, 'success');
@@ -264,7 +277,15 @@
                         '• 🟡 黄色：工时统计列<br>' +
                         '• 🔴 浅红色：迟到/早退/中午不打卡<br>' +
                         '• 🔥 深红色：有问题的时间数据 (需要人工确认)<br>' +
-                        '• 🟢 绿色：假期列';
+                        '• 🟢 绿色：假期列<br><br>' +
+                        '<strong>📋 异常类型颜色说明：</strong><br>' +
+                        '• <span style="background-color: #FFC7CE; padding: 2px 6px; border-radius: 3px;">浅红色</span> 冒号距离异常<br>' +
+                        '• <span style="background-color: #FF0000; padding: 2px 6px; border-radius: 3px; color: white;">深红色</span> 奇数时间记录<br>' +
+                        '• <span style="background-color: #FF8C00; padding: 2px 6px; border-radius: 3px; color: white;">深橙色</span> 时间顺序错误<br>' +
+                        '• <span style="background-color: #FF6B6B; padding: 2px 6px; border-radius: 3px; color: white;">橙红色</span> 时间格式无效<br>' +
+                        '• <span style="background-color: #9932CC; padding: 2px 6px; border-radius: 3px; color: white;">紫色</span> 解析错误<br>' +
+                        '• <span style="background-color: #87CEEB; padding: 2px 6px; border-radius: 3px;">天蓝色</span> 混合分隔符<br>' +
+                        '• <span style="background-color: #FFD700; padding: 2px 6px; border-radius: 3px;">金色</span> 工作时间跨度异常';
 
                     showResult('step2Result', message, 'success');
                     completeStep('step3');

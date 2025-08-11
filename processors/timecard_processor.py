@@ -126,13 +126,63 @@ class TimecardProcessor:
             # 使用openpyxl添加高亮显示
             workbook = load_workbook(output_path)
             worksheet = workbook.active
-            highlight_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+            
+            # 定义不同异常类型的颜色
+            anomaly_colors = {
+                'colon_distance': 'FFC7CE',      # 浅红色
+                'odd_time_count': 'FF0000',      # 深红色
+                'long_work_span': 'FFD700',      # 金色
+                'time_sequence_error': 'FF8C00', # 深橙色
+                'invalid_time_format': 'FF6B6B', # 橙红色
+                'parse_error': '9932CC',         # 紫色
+                'mixed_separators': '87CEEB'     # 天蓝色
+            }
 
-            # 高亮有问题的单元格
+            # 创建异常类型到单元格位置的映射
+            anomaly_cells = {}
+            for anomaly in all_anomalies:
+                anomaly_type = anomaly['type']
+                if anomaly_type not in anomaly_cells:
+                    anomaly_cells[anomaly_type] = []
+                
+                # 从详细错误信息中找到对应的单元格位置
+                for key, error_info in detailed_errors.items():
+                    if any(a['type'] == anomaly_type for a in error_info['anomalies']):
+                        # 解析员工和列信息
+                        parts = key.split('_')
+                        if len(parts) >= 3:
+                            employee_name = parts[0]
+                            col_idx = int(parts[2])
+                            # 找到员工在数据框中的行索引
+                            for i in range(len(df_new)):
+                                if df_new.iloc[i, 0] == employee_name:
+                                    anomaly_cells[anomaly_type].append((i, col_idx))
+                                    break
+
+            # 应用不同颜色的高亮
+            for anomaly_type, cells in anomaly_cells.items():
+                if anomaly_type in anomaly_colors:
+                    color = anomaly_colors[anomaly_type]
+                    fill = PatternFill(start_color=color, end_color=color, fill_type='solid')
+                    
+                    for row_idx, col_idx in cells:
+                        cell = worksheet.cell(row=row_idx + 2, column=col_idx + 1)
+                        cell.fill = fill
+                        # 添加注释说明异常类型
+                        if not cell.comment:
+                            from openpyxl.comments import Comment
+                            anomaly_info = next((a for a in all_anomalies if a['type'] == anomaly_type), None)
+                            if anomaly_info:
+                                comment_text = f"异常类型: {anomaly_info['type']}\n{anomaly_info['description']}"
+                                cell.comment = Comment(comment_text, "系统检测")
+
+            # 为没有特定异常类型的错误单元格应用默认高亮
+            default_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
             for i in range(len(date_range)):
                 for j in highlight_index[i]:
                     cell = worksheet.cell(row=j + 2, column=i + 2)
-                    cell.fill = highlight_fill
+                    if not cell.fill.start_color.rgb:  # 如果单元格还没有被高亮
+                        cell.fill = default_fill
 
             workbook.save(output_path)
             workbook.close()
@@ -535,13 +585,23 @@ class TimecardProcessor:
 
     def _apply_enhanced_styles(self, workbook, df_final, attendance_result, problematic_cells,
                                original_date_cols, holiday_result):
-        """应用增强的样式"""
+        """应用增强的样式，支持不同异常类型的颜色区分"""
         # 定义颜色
         yellow_fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
         red_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
         green_fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
-        problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
         log_header_fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+        
+        # 异常类型颜色映射
+        anomaly_colors = {
+            'colon_distance': 'FFC7CE',      # 浅红色
+            'odd_time_count': 'FF0000',      # 深红色
+            'long_work_span': 'FFD700',      # 金色
+            'time_sequence_error': 'FF8C00', # 深橙色
+            'invalid_time_format': 'FF6B6B', # 橙红色
+            'parse_error': '9932CC',         # 紫色
+            'mixed_separators': '87CEEB'     # 天蓝色
+        }
 
         # 时间汇总工作表样式
         sheet1 = workbook["时间汇总"]
@@ -553,10 +613,19 @@ class TimecardProcessor:
         if holiday_result['holiday_column'] is not None:
             sheet1.cell(row=1, column=holiday_result['holiday_column'] + 1).fill = green_fill
 
-        # 标红问题数据
+        # 为问题数据应用不同颜色的高亮
         for row_idx, col_idx in problematic_cells:
             if col_idx <= original_date_cols:
-                sheet1.cell(row=row_idx + 2, column=col_idx + 1).fill = problem_fill
+                # 这里可以根据具体的异常类型应用不同颜色
+                # 由于Step2中可能没有详细的异常类型信息，使用默认的深红色
+                problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
+                cell = sheet1.cell(row=row_idx + 2, column=col_idx + 1)
+                cell.fill = problem_fill
+                
+                # 添加注释说明这是问题数据
+                if not cell.comment:
+                    from openpyxl.comments import Comment
+                    cell.comment = Comment("问题数据 - 需要人工确认", "系统检测")
 
         # 其他工作表样式
         for sheet_name, highlight_cols in [("迟到", attendance_result['highlight_cols_m']),
@@ -567,17 +636,49 @@ class TimecardProcessor:
 
             for i, rows in enumerate(highlight_cols):
                 for j in rows:
-                    sheet.cell(row=j + 2, column=i + 2).fill = red_fill
+                    cell = sheet.cell(row=j + 2, column=i + 2)
+                    cell.fill = red_fill
+                    # 添加考勤问题注释
+                    if not cell.comment:
+                        from openpyxl.comments import Comment
+                        attendance_type = {
+                            "迟到": "迟到",
+                            "中午不打卡": "中午不打卡",
+                            "早退": "早退"
+                        }.get(sheet_name, "考勤问题")
+                        cell.comment = Comment(f"{attendance_type} - 需要关注", "系统检测")
 
+            # 为问题数据应用高亮
             for row_idx, col_idx in problematic_cells:
                 if col_idx <= len(highlight_cols):
-                    sheet.cell(row=row_idx + 2, column=col_idx + 1).fill = problem_fill
+                    problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
+                    cell = sheet.cell(row=row_idx + 2, column=col_idx + 1)
+                    cell.fill = problem_fill
 
         # 处理日志工作表样式
         log_sheet = workbook["处理日志"]
         for row in [1, 7]:  # 标题行
             log_sheet.cell(row=row, column=1).fill = log_header_fill
             log_sheet.cell(row=row, column=2).fill = log_header_fill
+
+        # 添加异常类型说明
+        anomaly_legend_row = 15
+        log_sheet.cell(row=anomaly_legend_row, column=1, value="异常类型颜色说明").fill = log_header_fill
+        log_sheet.cell(row=anomaly_legend_row, column=2, value="").fill = log_header_fill
+        
+        legend_data = [
+            ["冒号距离异常", "浅红色 - 时间格式问题"],
+            ["奇数时间记录", "深红色 - 打卡次数不匹配"],
+            ["时间顺序错误", "深橙色 - 时间顺序混乱"],
+            ["时间格式无效", "橙红色 - 格式不符合标准"],
+            ["解析错误", "紫色 - 无法解析的数据"],
+            ["混合分隔符", "天蓝色 - 多种分隔符混用"],
+            ["工作时间跨度异常", "金色 - 工作时间过长"]
+        ]
+        
+        for i, (anomaly_type, description) in enumerate(legend_data, 1):
+            log_sheet.cell(row=anomaly_legend_row + i, column=1, value=anomaly_type)
+            log_sheet.cell(row=anomaly_legend_row + i, column=2, value=description)
 
         # 自动调整列宽
         for sheet in workbook.worksheets:

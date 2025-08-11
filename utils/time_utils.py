@@ -45,6 +45,8 @@ def parse_time_string(raw_time_str):
     - 制表符分隔: "10:36\t11:18\t11:33\t21:10"
     - 混合分隔符
     """
+    import re
+    
     if not raw_time_str or str(raw_time_str).strip() in ['nan', '', 'None']:
         return []
 
@@ -53,8 +55,27 @@ def parse_time_string(raw_time_str):
 
     # 方法1: 处理换行分隔
     if '\n' in raw_time_str:
-        time_list = raw_time_str.split('\n')
-        print(f"📝 换行分割: {raw_time_str} -> {time_list}")
+        # 先按换行分割，然后处理每一行
+        lines = raw_time_str.split('\n')
+        print(f"📝 换行分割: {raw_time_str} -> {lines}")
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # 如果行内还有空格分隔的时间，进一步分割
+            if ' ' in line:
+                # 使用正则表达式提取该行中的所有时间
+                time_pattern = r'\b\d{1,2}:\d{2}\b'
+                line_times = re.findall(time_pattern, line)
+                time_list.extend(line_times)
+                print(f"📝 行内空格分割: '{line}' -> {line_times}")
+            else:
+                # 单行单个时间
+                if re.match(r'^\d{1,2}:\d{2}$', line):
+                    time_list.append(line)
+                    print(f"📝 单行时间: '{line}'")
 
     # 方法2: 处理其他分隔符（空格、制表符、逗号等）
     elif any(sep in raw_time_str for sep in [' ', '\t', ',', ';']):
@@ -156,7 +177,7 @@ def normalize_time_list(time_list):
 def detect_time_anomalies(raw_time_str, employee_name, column_idx):
     """
     检测时间数据异常
-    返回异常类型和详细信息
+    返回异常类型和详细信息，包含颜色映射
     """
     anomalies = []
 
@@ -172,7 +193,9 @@ def detect_time_anomalies(raw_time_str, employee_name, column_idx):
         anomalies.append({
             'type': 'colon_distance',
             'message': f'冒号距离异常 - 员工: {employee_name}, 列: {column_idx}, 最小距离: {min_distance}',
-            'severity': 'warning'
+            'severity': 'warning',
+            'color': 'FFC7CE',  # 浅红色
+            'description': '时间格式问题，冒号前后数字位数异常'
         })
 
     # 检测2: 解析时间
@@ -184,7 +207,9 @@ def detect_time_anomalies(raw_time_str, employee_name, column_idx):
         anomalies.append({
             'type': 'odd_time_count',
             'message': f'奇数时间记录 - 员工: {employee_name}, 列: {column_idx}, 时间数量: {len(valid_times)}',
-            'severity': 'error'
+            'severity': 'error',
+            'color': 'FF0000',  # 深红色
+            'description': '打卡次数为奇数，无法配对计算工时'
         })
 
     # 检测4: 时间跨度异常
@@ -194,7 +219,9 @@ def detect_time_anomalies(raw_time_str, employee_name, column_idx):
             anomalies.append({
                 'type': 'long_work_span',
                 'message': f'工作时间跨度异常 - 员工: {employee_name}, 列: {column_idx}, 跨度: {time_span:.1f}小时',
-                'severity': 'warning'
+                'severity': 'warning',
+                'color': 'FFD700',  # 金色
+                'description': '单日工作时间跨度超过16小时，可能存在数据错误'
             })
 
     # 检测5: 时间顺序异常
@@ -204,9 +231,48 @@ def detect_time_anomalies(raw_time_str, employee_name, column_idx):
                 anomalies.append({
                     'type': 'time_sequence_error',
                     'message': f'时间顺序异常 - 员工: {employee_name}, 列: {column_idx}, {valid_times[i - 1].strftime("%H:%M")} >= {valid_times[i].strftime("%H:%M")}',
-                    'severity': 'error'
+                    'severity': 'error',
+                    'color': 'FF8C00',  # 深橙色
+                    'description': '打卡时间顺序混乱，后一个时间早于前一个时间'
                 })
                 break
+
+    # 检测6: 时间格式无效
+    invalid_times = []
+    for time_str in time_list:
+        if not validate_time_format(time_str):
+            invalid_times.append(time_str)
+    
+    if invalid_times:
+        anomalies.append({
+            'type': 'invalid_time_format',
+            'message': f'时间格式无效 - 员工: {employee_name}, 列: {column_idx}, 无效时间: {invalid_times}',
+            'severity': 'error',
+            'color': 'FF6B6B',  # 橙红色
+            'description': '时间格式不符合HH:MM标准'
+        })
+
+    # 检测7: 解析错误
+    if not time_list and raw_time_str not in ['nan', '', 'None']:
+        anomalies.append({
+            'type': 'parse_error',
+            'message': f'解析错误 - 员工: {employee_name}, 列: {column_idx}, 原始数据: {raw_time_str}',
+            'severity': 'error',
+            'color': '9932CC',  # 紫色
+            'description': '时间字符串无法正确解析'
+        })
+
+    # 检测8: 混合分隔符
+    separators = ['\n', ' ', '\t', ',', ';']
+    found_separators = [sep for sep in separators if sep in raw_time_str]
+    if len(found_separators) > 1:
+        anomalies.append({
+            'type': 'mixed_separators',
+            'message': f'混合分隔符 - 员工: {employee_name}, 列: {column_idx}, 分隔符: {found_separators}',
+            'severity': 'warning',
+            'color': '87CEEB',  # 天蓝色
+            'description': '时间字符串包含多种分隔符，可能导致解析错误'
+        })
 
     return anomalies
 
