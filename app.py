@@ -30,8 +30,8 @@ def favicon():
 
 if __name__ == '__main__':
     print("🚀 启动模块化打卡数据处理系统...")
-    print("📱 访问地址: http://localhost:8080")
+    print("📱 访问地址: http://localhost:811")
     print("✨ 包含完整的错误检测、高亮标记和详细报告功能")
     print("🔄 新增：支持上传修改后的错误表格重新处理")
     print("🏗️ 架构：模块化设计，易于维护和扩展")
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=811, debug=True)

@@ -5,7 +5,7 @@ services:
   timecard-app:
     build: .
     ports:
-      - "952:952"
+      - "811:811"
     volumes:
       - ./uploads:/app/uploads
       - ./processed:/app/processed
@@ -13,7 +13,7 @@ services:
       - FLASK_ENV=production
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:952/api/status"]
+      test: ["CMD", "curl", "-f", "http://localhost:811/api/status"]
       interval: 30s
       timeout: 10s
       retries: 3

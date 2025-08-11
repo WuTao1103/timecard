@@ -7,7 +7,16 @@ from openpyxl.styles import PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 import traceback
 import os
-from utils.time_utils import get_minimum_distance, daily_working_time, parse_time_string, validate_time_format, normalize_time_list
+from utils.time_utils import (
+    get_minimum_distance,
+    daily_working_time,
+    parse_time_string,
+    validate_time_format,
+    normalize_time_list,
+    detect_time_anomalies,
+    calculate_working_hours_with_details
+)
+
 
 class TimecardProcessor:
     def __init__(self, upload_folder, processed_folder):
@@ -15,15 +24,19 @@ class TimecardProcessor:
         self.processed_folder = processed_folder
 
     def process_step1(self, file_path):
-        """Step1处理逻辑 - 包含完整的错误检测和高亮功能"""
+        """Step1处理逻辑 - 包含增强的错误检测和高亮功能"""
         try:
             df = pd.read_excel(file_path)
+            print("📊 开始Step1处理...")
+            print(f"📝 原始数据形状: {df.shape}")
 
             # 获取时间范围
             time_range = (df.iloc[1, 2]).replace("/", "").replace("~", "-").replace(" ", "")
+            print(f"📅 时间范围: {time_range}")
 
             total_rows = df.shape[0]
             employee_amount = int((total_rows - 2) / 3)
+            print(f"👥 员工数量: {employee_amount}")
 
             date_row = df.iloc[2].to_list()
             date_range = [x for x in date_row if str(x) != 'nan']
@@ -41,32 +54,69 @@ class TimecardProcessor:
             df_new_sorted = df_new.sort_values(by='nan_count', ascending=True).reset_index(drop=True)
             df_new = df_new_sorted.drop('nan_count', axis=1)
 
-            # 检测错误值位置
+            # 增强的错误检测
+            print("🔍 开始增强的错误检测...")
+            all_anomalies = []
             error_value_location = []
-            for i in range(employee_amount):
-                for j in range(len(date_range)):
-                    string = str(df_new.iloc[i, j + 1])
+            detailed_errors = {}
 
-                    if string == 'nan':
+            for i in range(employee_amount):
+                employee_name = df_new.iloc[i, 0]
+                for j in range(len(date_range)):
+                    cell_value = str(df_new.iloc[i, j + 1])
+
+                    if cell_value == 'nan':
                         continue
-                    else:
-                        letter = [x for x in string]
-                        min_distance = get_minimum_distance(letter)
-                        if min_distance == 3:
-                            location = [i, j + 1]
+
+                    # 使用增强的异常检测
+                    anomalies = detect_time_anomalies(cell_value, employee_name, j + 1)
+
+                    if anomalies:
+                        all_anomalies.extend(anomalies)
+                        for anomaly in anomalies:
+                            if anomaly['severity'] == 'error':
+                                error_value_location.append([i, j + 1])
+
+                        # 保存详细错误信息
+                        detailed_errors[f"{employee_name}_col_{j + 1}"] = {
+                            'employee': employee_name,
+                            'column': j + 1,
+                            'raw_value': cell_value,
+                            'anomalies': anomalies
+                        }
+
+                    # 原有的冒号距离检测（保持兼容性）
+                    letter = [x for x in cell_value]
+                    min_distance = get_minimum_distance(letter)
+                    if min_distance == 3:
+                        location = [i, j + 1]
+                        if location not in error_value_location:
                             error_value_location.append(location)
 
             # 检测奇数时间记录
+            print("🔢 检测奇数时间记录...")
             highlight_index = []
             for i in range(len(date_range)):
-                time_rows = df_new[((df_new.iloc[:, i + 1].str.count(":") % 2) == 1).values].index.to_list()
+                time_rows = []
+                for row_idx in range(len(df_new)):
+                    cell_value = str(df_new.iloc[row_idx, i + 1])
+                    if cell_value == 'nan':
+                        continue
+
+                    # 使用增强的解析功能
+                    time_list = parse_time_string(cell_value)
+                    if len(time_list) % 2 == 1:  # 奇数时间记录
+                        time_rows.append(row_idx)
+                        print(f"⚠️ 发现奇数时间记录: 员工 {df_new.iloc[row_idx, 0]}, 列 {i + 1}, 时间: {time_list}")
+
                 highlight_index.append(time_rows)
 
             # 合并错误位置
             for i in range(len(error_value_location)):
                 r = error_value_location[i][0]
                 c = error_value_location[i][1]
-                highlight_index[c - 1].append(r)
+                if r not in highlight_index[c - 1]:
+                    highlight_index[c - 1].append(r)
 
             # 保存文件并添加高亮
             output_filename = f'table_with_error_cells({time_range}).xlsx'
@@ -87,16 +137,33 @@ class TimecardProcessor:
             workbook.save(output_path)
             workbook.close()
 
-            # 生成错误报告
+            # 生成增强的错误报告
             error_details = []
             total_highlighted = sum(len(rows) for rows in highlight_index)
 
-            if error_value_location:
-                error_details.append(f"发现 {len(error_value_location)} 个冒号距离异常的时间记录")
+            # 按异常类型统计
+            anomaly_stats = {}
+            for anomaly in all_anomalies:
+                anomaly_type = anomaly['type']
+                if anomaly_type not in anomaly_stats:
+                    anomaly_stats[anomaly_type] = 0
+                anomaly_stats[anomaly_type] += 1
 
-            if total_highlighted > len(error_value_location):
-                odd_time_count = total_highlighted - len(error_value_location)
-                error_details.append(f"发现 {odd_time_count} 个奇数时间记录")
+            for anomaly_type, count in anomaly_stats.items():
+                type_names = {
+                    'colon_distance': '冒号距离异常',
+                    'odd_time_count': '奇数时间记录',
+                    'long_work_span': '工作时间跨度异常',
+                    'time_sequence_error': '时间顺序错误'
+                }
+                error_details.append(f"发现 {count} 个{type_names.get(anomaly_type, anomaly_type)}")
+
+            print(f"✅ Step1处理完成")
+            print(f"📊 统计信息:")
+            print(f"   - 员工数量: {employee_amount}")
+            print(f"   - 错误位置: {len(error_value_location)}")
+            print(f"   - 高亮单元格: {total_highlighted}")
+            print(f"   - 异常类型: {list(anomaly_stats.keys())}")
 
             return {
                 'success': True,
@@ -105,10 +172,13 @@ class TimecardProcessor:
                 'employee_count': employee_amount,
                 'error_count': len(error_value_location),
                 'total_highlighted': total_highlighted,
-                'error_details': error_details
+                'error_details': error_details,
+                'anomaly_stats': anomaly_stats,
+                'detailed_errors': detailed_errors
             }
 
         except Exception as e:
+            print(f"❌ Step1处理失败: {str(e)}")
             return {
                 'success': False,
                 'error': str(e),
@@ -116,8 +186,9 @@ class TimecardProcessor:
             }
 
     def process_step2(self, error_file_path, time_range):
-        """Step2处理逻辑 - 包含完整的工时计算、错误处理和多工作表生成"""
+        """Step2处理逻辑 - 包含增强的工时计算、错误处理和多工作表生成"""
         try:
+            print("📊 开始Step2处理...")
             df = pd.read_excel(error_file_path)
             df_new = df.copy()
 
@@ -130,43 +201,73 @@ class TimecardProcessor:
             # 记录有问题的数据
             problematic_data = []
             problematic_cells = []
+            processing_stats = {
+                'total_cells': 0,
+                'valid_cells': 0,
+                'invalid_cells': 0,
+                'zero_hour_cells': 0
+            }
 
+            print("🔄 开始时间数据处理...")
             # 处理时间数据
             for i in range(df.shape[0]):
+                employee_name = df.iloc[i, 0]
                 for j in range(len(df.columns) - 1):
+                    processing_stats['total_cells'] += 1
+
                     if (df.iloc[i, j + 1] == 'nan'):
                         continue
 
                     raw_time_str = str(df.iloc[i, j + 1])
+                    print(f"🔍 处理: 员工 {employee_name}, 列 {j + 1}, 原始数据: '{raw_time_str}'")
 
-                    # 分割时间字符串
+                    # 使用增强的时间解析
                     time_list = parse_time_string(raw_time_str)
+
+                    if not time_list:
+                        problematic_data.append(
+                            f"无法解析时间 - 员工: {employee_name}, 列: {j + 1}, 原始: {raw_time_str}")
+                        problematic_cells.append((i, j + 1))
+                        df_new.iloc[i, j + 1] = 0
+                        processing_stats['invalid_cells'] += 1
+                        continue
 
                     # 验证和规范化时间
                     time_list_normalized = normalize_time_list(time_list)
-                    valid_times = len(time_list_normalized) > 0
 
-                    # 检查是否有无效时间
-                    for time_str in time_list:
-                        if not validate_time_format(time_str):
-                            problematic_data.append(
-                                f"无效时间 - 员工: {df.iloc[i, 0]}, 列: {j + 1}, 时间: {time_str}")
-                            problematic_cells.append((i, j + 1))
-                            valid_times = False
+                    # 使用增强的工时计算
+                    work_result = calculate_working_hours_with_details(time_list_normalized)
 
-                    # 计算工作时间
-                    if valid_times and len(time_list_normalized) > 0:
-                        if len(time_list_normalized) % 2 == 0:
-                            df_new.iloc[i, j + 1] = daily_working_time(time_list_normalized)
-                        else:
+                    if work_result['is_valid']:
+                        df_new.iloc[i, j + 1] = work_result['total_hours']
+                        processing_stats['valid_cells'] += 1
+
+                        # 记录工作时段详情（可选）
+                        if work_result['total_hours'] > 12:  # 超过12小时工作时间的警告
                             problematic_data.append(
-                                f"奇数时间记录 - 员工: {df.iloc[i, 0]}, 列: {j + 1}, 时间数量: {len(time_list_normalized)}")
-                            problematic_cells.append((i, j + 1))
-                            df_new.iloc[i, j + 1] = 0
+                                f"工作时间异常长 - 员工: {employee_name}, 列: {j + 1}, "
+                                f"工时: {work_result['total_hours']}h, 时段: {work_result['work_periods']}"
+                            )
                     else:
+                        problematic_data.append(
+                            f"{work_result['error']} - 员工: {employee_name}, 列: {j + 1}, "
+                            f"时间: {time_list}, 错误: {work_result['error']}"
+                        )
+                        problematic_cells.append((i, j + 1))
                         df_new.iloc[i, j + 1] = 0
+                        processing_stats['invalid_cells'] += 1
+
+                    if df_new.iloc[i, j + 1] == 0:
+                        processing_stats['zero_hour_cells'] += 1
+
+            print(f"📊 处理统计:")
+            print(f"   - 总单元格: {processing_stats['total_cells']}")
+            print(f"   - 有效单元格: {processing_stats['valid_cells']}")
+            print(f"   - 无效单元格: {processing_stats['invalid_cells']}")
+            print(f"   - 零工时单元格: {processing_stats['zero_hour_cells']}")
 
             # 计算工时统计
+            print("📊 计算工时统计...")
             n = len(df_new)
 
             # 第一周工时计算
@@ -193,6 +294,7 @@ class TimecardProcessor:
 
             # 识别需要检查迟到早退的员工
             name_list = df_new[(df_new['HEG1'] > 30) | (df_new['HEG2'] > 30)]['name'].to_list()
+            print(f"👥 需要检查考勤的员工: {len(name_list)} 人")
 
             # 处理原始时间数据用于显示
             df_original_for_display = df_original_times.astype(str).replace('nan', '')
@@ -220,17 +322,27 @@ class TimecardProcessor:
                 df_final.iloc[:, col_idx] = df_final.iloc[:, col_idx].replace(0, '')
 
             # 检测迟到早退
-            attendance_result = self._detect_attendance_issues(df_original_for_display, name_list, df_final)
+            print("🕐 检测考勤问题...")
+            attendance_result = self._detect_attendance_issues_enhanced(df_original_for_display, name_list, df_final)
 
             # 处理假期
+            print("🏖️ 处理假期信息...")
             holiday_result = self._process_holidays(time_range, df_final)
 
             # 创建Excel文件
             output_filename = f'work_attendance({time_range}).xlsx'
             output_path = os.path.join(self.processed_folder, output_filename)
 
-            self._create_excel_report(df_final, df_original_for_display, attendance_result, 
-                                    problematic_cells, original_date_cols, output_path, holiday_result)
+            print("📋 生成Excel报告...")
+            self._create_excel_report_enhanced(df_final, df_original_for_display, attendance_result,
+                                               problematic_cells, original_date_cols, output_path,
+                                               holiday_result, processing_stats)
+
+            print(f"✅ Step2处理完成")
+            print(f"📊 最终统计:")
+            print(f"   - 总工时: {sum(Total_HEG):.1f}h")
+            print(f"   - 加班时间: {sum(Total_OT):.1f}h")
+            print(f"   - 问题单元格: {len(problematic_cells)}")
 
             return {
                 'success': True,
@@ -241,18 +353,20 @@ class TimecardProcessor:
                 'attendance_summary': attendance_result['attendance_summary'],
                 'employee_count': len(df_final),
                 'total_working_hours': sum(Total_HEG),
-                'total_overtime': sum(Total_OT)
+                'total_overtime': sum(Total_OT),
+                'processing_stats': processing_stats
             }
 
         except Exception as e:
+            print(f"❌ Step2处理失败: {str(e)}")
             return {
                 'success': False,
                 'error': str(e),
                 'traceback': traceback.format_exc()
             }
 
-    def _detect_attendance_issues(self, df_original_for_display, name_list, df_final):
-        """检测迟到早退问题"""
+    def _detect_attendance_issues_enhanced(self, df_original_for_display, name_list, df_final):
+        """增强的考勤问题检测"""
         r = df_original_for_display.shape[0]
         c = df_original_for_display.shape[1]
 
@@ -274,36 +388,28 @@ class TimecardProcessor:
 
                     raw_time_str = str(df_original_for_display.iloc[j, i + 1])
 
-                    # 提取时间字符串
-                    time_snapshot = parse_time_string(raw_time_str)
+                    # 使用增强的时间解析
+                    time_list = parse_time_string(raw_time_str)
+                    valid_times = normalize_time_list(time_list)
 
-                    # 验证时间格式
-                    valid_times = []
-                    for t in time_snapshot:
-                        t = t.strip()
-                        if t and validate_time_format(t):
-                            valid_times.append(t)
-
-                    time_snapshot = valid_times
-
-                    if len(time_snapshot) == 0:
+                    if len(valid_times) == 0:
                         continue
 
                     try:
-                        check_in_time = datetime.strptime(time_snapshot[0], '%H:%M')
+                        check_in_time = valid_times[0]
+                        check_out_time = valid_times[-1]
                         morning_reference_time = datetime.strptime('10:00', '%H:%M')
-                        check_out_time = datetime.strptime(time_snapshot[-1], '%H:%M')
                         evening_reference_time = datetime.strptime('17:00', '%H:%M')
-                        check_times = len(time_snapshot)
+                        check_times = len(valid_times)
 
                         employee_name = df_original_for_display.iloc[j, 0]
                         date_col = df_final.columns[i + 1]
 
                         # 检测迟到
-                        if check_in_time > morning_reference_time:
+                        if check_in_time.time() > morning_reference_time.time():
                             highlight_rows_m.append(j)
                             attendance_issues.append(
-                                f"迟到 - {employee_name}, {date_col}, 上班时间: {time_snapshot[0]}")
+                                f"迟到 - {employee_name}, {date_col}, 上班时间: {check_in_time.strftime('%H:%M')}")
 
                         # 检测中午不打卡
                         if check_times == 2:
@@ -312,12 +418,13 @@ class TimecardProcessor:
                                 f"中午不打卡 - {employee_name}, {date_col}, 打卡次数: {check_times}")
 
                         # 检测早退
-                        if check_out_time < evening_reference_time:
+                        if check_out_time.time() < evening_reference_time.time():
                             highlight_rows_e.append(j)
                             attendance_issues.append(
-                                f"早退 - {employee_name}, {date_col}, 下班时间: {time_snapshot[-1]}")
+                                f"早退 - {employee_name}, {date_col}, 下班时间: {check_out_time.strftime('%H:%M')}")
 
-                    except ValueError as e:
+                    except Exception as e:
+                        print(f"⚠️ 考勤检测异常: 员工 {df_original_for_display.iloc[j, 0]}, 列 {i + 1}, 错误: {e}")
                         continue
 
             highlight_cols_m.append(highlight_rows_m)
@@ -368,7 +475,7 @@ class TimecardProcessor:
 
         # 检查假期
         holiday_column = None
-        holiday_mapping = {}  # 记录假期列名映射关系
+        holiday_mapping = {}
         for time in my_vacation_date:
             if start_date < time < end_date:
                 index = US_holidays[US_holidays['date'] == time].index[0]
@@ -380,38 +487,63 @@ class TimecardProcessor:
                     holiday_mapping[old_col_name] = new_col_name
                     holiday_column = df_final.columns.get_loc(holiday)
 
-        # 更新工时列名以匹配假期列名变化
-        for old_col_name, new_col_name in holiday_mapping.items():
-            old_hours_col = f"{old_col_name}_小时"
-            new_hours_col = f"{new_col_name}_小时"
-            if old_hours_col in df_final.columns:
-                df_final = df_final.rename(columns={old_hours_col: new_hours_col})
+        return {'holiday_column': holiday_column, 'df_final': df_final}
 
-        return {'holiday_column': holiday_column}
-
-    def _create_excel_report(self, df_final, df_original_for_display, attendance_result, 
-                           problematic_cells, original_date_cols, output_path, holiday_result):
-        """创建Excel报告"""
+    def _create_excel_report_enhanced(self, df_final, df_original_for_display, attendance_result,
+                                      problematic_cells, original_date_cols, output_path,
+                                      holiday_result, processing_stats):
+        """创建增强的Excel报告"""
         workbook = Workbook()
         workbook.remove(workbook.active)
 
         # 创建工作表
-        sheet_names = ["时间汇总", "迟到", "中午不打卡", "早退"]
-        sheets_data = [df_final, df_original_for_display, df_original_for_display, df_original_for_display]
+        sheet_names = ["时间汇总", "迟到", "中午不打卡", "早退", "处理日志"]
+        sheets_data = [df_final, df_original_for_display, df_original_for_display, df_original_for_display, None]
 
-        for sheet_name, data in zip(sheet_names, sheets_data):
+        for i, (sheet_name, data) in enumerate(zip(sheet_names, sheets_data)):
             ws = workbook.create_sheet(title=sheet_name)
-            for r_idx, row in enumerate(dataframe_to_rows(data, index=False, header=True), 1):
-                for c_idx, value in enumerate(row, 1):
-                    ws.cell(row=r_idx, column=c_idx, value=value)
 
+            if data is not None:
+                for r_idx, row in enumerate(dataframe_to_rows(data, index=False, header=True), 1):
+                    for c_idx, value in enumerate(row, 1):
+                        ws.cell(row=r_idx, column=c_idx, value=value)
+            else:
+                # 处理日志工作表
+                log_data = [
+                    ["处理统计", ""],
+                    ["总单元格数", processing_stats['total_cells']],
+                    ["有效单元格数", processing_stats['valid_cells']],
+                    ["无效单元格数", processing_stats['invalid_cells']],
+                    ["零工时单元格数", processing_stats['zero_hour_cells']],
+                    ["", ""],
+                    ["考勤统计", ""],
+                    ["迟到次数", attendance_result['attendance_summary']['late_count']],
+                    ["中午不打卡次数", attendance_result['attendance_summary']['no_lunch_count']],
+                    ["早退次数", attendance_result['attendance_summary']['early_leave_count']],
+                ]
+
+                for r_idx, row in enumerate(log_data, 1):
+                    for c_idx, value in enumerate(row, 1):
+                        ws.cell(row=r_idx, column=c_idx, value=value)
+
+        # 应用样式
+        self._apply_enhanced_styles(workbook, df_final, attendance_result, problematic_cells,
+                                    original_date_cols, holiday_result)
+
+        workbook.save(output_path)
+        workbook.close()
+
+    def _apply_enhanced_styles(self, workbook, df_final, attendance_result, problematic_cells,
+                               original_date_cols, holiday_result):
+        """应用增强的样式"""
         # 定义颜色
         yellow_fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
         red_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
         green_fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
         problem_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
+        log_header_fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
 
-        # 高亮时间汇总工作表
+        # 时间汇总工作表样式
         sheet1 = workbook["时间汇总"]
         metrics_start = len(df_final.columns) - 6
         for i in range(metrics_start, len(df_final.columns)):
@@ -421,29 +553,31 @@ class TimecardProcessor:
         if holiday_result['holiday_column'] is not None:
             sheet1.cell(row=1, column=holiday_result['holiday_column'] + 1).fill = green_fill
 
-        # 标红有问题的数据
+        # 标红问题数据
         for row_idx, col_idx in problematic_cells:
             if col_idx <= original_date_cols:
                 sheet1.cell(row=row_idx + 2, column=col_idx + 1).fill = problem_fill
 
-        # 高亮其他工作表
-        c = df_original_for_display.shape[1]
-        for sheet_idx, (sheet_name, highlight_cols) in enumerate(
-                zip(["迟到", "中午不打卡", "早退"], 
-                    [attendance_result['highlight_cols_m'], 
-                     attendance_result['highlight_cols_n'], 
-                     attendance_result['highlight_cols_e']])):
+        # 其他工作表样式
+        for sheet_name, highlight_cols in [("迟到", attendance_result['highlight_cols_m']),
+                                           ("中午不打卡", attendance_result['highlight_cols_n']),
+                                           ("早退", attendance_result['highlight_cols_e'])]:
             sheet = workbook[sheet_name]
             sheet.cell(row=1, column=1).fill = red_fill
 
-            for i in range(c - 1):
-                for j in highlight_cols[i]:
+            for i, rows in enumerate(highlight_cols):
+                for j in rows:
                     sheet.cell(row=j + 2, column=i + 2).fill = red_fill
 
-            # 标红有问题的数据
             for row_idx, col_idx in problematic_cells:
-                if col_idx <= c - 1:
+                if col_idx <= len(highlight_cols):
                     sheet.cell(row=row_idx + 2, column=col_idx + 1).fill = problem_fill
+
+        # 处理日志工作表样式
+        log_sheet = workbook["处理日志"]
+        for row in [1, 7]:  # 标题行
+            log_sheet.cell(row=row, column=1).fill = log_header_fill
+            log_sheet.cell(row=row, column=2).fill = log_header_fill
 
         # 自动调整列宽
         for sheet in workbook.worksheets:
@@ -456,8 +590,5 @@ class TimecardProcessor:
                             max_length = len(str(cell.value))
                     except:
                         pass
-                adjusted_width = (max_length + 2) * 1.2
+                adjusted_width = min((max_length + 2) * 1.2, 50)  # 限制最大宽度
                 sheet.column_dimensions[column_letter].width = adjusted_width
-
-        workbook.save(output_path)
-        workbook.close() 

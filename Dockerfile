@@ -24,11 +24,11 @@ COPY app.py .
 RUN mkdir -p /app/uploads /app/processed
 
 # 暴露端口
-EXPOSE 952
+EXPOSE 811
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5000/api/status || exit 1
+    CMD curl -f http://localhost:811/api/status || exit 1
 
 # 启动命令
 CMD ["python", "app.py"]

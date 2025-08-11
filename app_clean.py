@@ -41,5 +41,5 @@ def status():
 
 if __name__ == '__main__':
     print("🚀 启动打卡数据处理系统...")
-    print("📱 访问地址: http://localhost:8080")
-    app.run(host='0.0.0.0', port=8080, debug=True) 
+    print("📱 访问地址: http://localhost:811")
+    app.run(host='0.0.0.0', port=811, debug=True) 

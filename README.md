@@ -87,7 +87,7 @@ python app.py
 ```
 
 ### 3. 访问系统
-打开浏览器访问：http://localhost:8080
+打开浏览器访问：http://localhost:811
 
 ## 🔧 模块说明
 

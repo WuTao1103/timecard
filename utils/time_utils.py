@@ -1,5 +1,7 @@
 from datetime import datetime
 import re
+import logging
+
 
 def get_minimum_distance(letter):
     """计算冒号之间的最小距离"""
@@ -19,6 +21,7 @@ def get_minimum_distance(letter):
     else:
         return None
 
+
 def daily_working_time(time_list_normalized):
     """计算每日工作时间"""
     time_part = []
@@ -31,36 +34,233 @@ def daily_working_time(time_list_normalized):
 
     return round(sum(time_part), 2)
 
+
 def parse_time_string(raw_time_str):
-    """解析时间字符串，提取有效的时间"""
+    """
+    增强的时间字符串解析，支持多种分隔符和格式
+    支持格式:
+    - 换行分隔: "10:36\n11:18\n11:33\n21:10"
+    - 空格分隔: "10:36  11:18 11:33 21:10"
+    - 逗号分隔: "10:36,11:18,11:33,21:10"
+    - 制表符分隔: "10:36\t11:18\t11:33\t21:10"
+    - 混合分隔符
+    """
+    if not raw_time_str or str(raw_time_str).strip() in ['nan', '', 'None']:
+        return []
+
+    raw_time_str = str(raw_time_str).strip()
     time_list = []
+
+    # 方法1: 处理换行分隔
     if '\n' in raw_time_str:
         time_list = raw_time_str.split('\n')
-    else:
-        time_pattern = r'\d{1,2}:\d{2}'
-        time_list = re.findall(time_pattern, raw_time_str)
+        print(f"📝 换行分割: {raw_time_str} -> {time_list}")
 
-    return [t.strip() for t in time_list if t.strip()]
+    # 方法2: 处理其他分隔符（空格、制表符、逗号等）
+    elif any(sep in raw_time_str for sep in [' ', '\t', ',', ';']):
+        # 先用正则表达式提取所有可能的时间
+        time_pattern = r'\b\d{1,2}:\d{2}\b'
+        time_matches = re.findall(time_pattern, raw_time_str)
+        if time_matches:
+            time_list = time_matches
+            print(f"📝 正则提取（有分隔符）: {raw_time_str} -> {time_list}")
+        else:
+            # 如果正则没匹配到，尝试分割
+            # 尝试多种分隔符
+            for separator in [' ', '\t', ',', ';', '  ', '   ']:
+                if separator in raw_time_str:
+                    time_list = raw_time_str.split(separator)
+                    break
+            print(f"📝 分隔符分割: {raw_time_str} -> {time_list}")
+
+    # 方法3: 使用正则表达式提取所有时间格式（兜底方案）
+    else:
+        time_pattern = r'\b\d{1,2}:\d{2}\b'
+        time_list = re.findall(time_pattern, raw_time_str)
+        print(f"📝 正则提取（无分隔符）: {raw_time_str} -> {time_list}")
+
+    # 清理和验证时间列表
+    cleaned_times = []
+    for time_str in time_list:
+        time_str = time_str.strip()
+        if time_str and time_str != '' and ':' in time_str:
+            # 基础格式验证
+            if re.match(r'^\d{1,2}:\d{2}$', time_str):
+                cleaned_times.append(time_str)
+            else:
+                print(f"⚠️ 跳过无效格式: '{time_str}'")
+
+    print(f"🔄 最终清理后: {cleaned_times}")
+    return cleaned_times
+
 
 def validate_time_format(time_str):
-    """验证时间格式是否有效"""
+    """增强的时间格式验证"""
+    if not time_str or not isinstance(time_str, str):
+        return False
+
+    time_str = time_str.strip()
+
+    # 检查基本格式
+    if not re.match(r'^\d{1,2}:\d{2}$', time_str):
+        return False
+
     try:
         if ':' in time_str and len(time_str.split(':')) == 2:
             hour, minute = time_str.split(':')
-            if 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59:
+            hour, minute = int(hour), int(minute)
+
+            # 验证小时和分钟的有效性
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return True
         return False
-    except:
+    except (ValueError, AttributeError):
         return False
 
+
 def normalize_time_list(time_list):
-    """规范化时间列表，返回datetime对象列表"""
+    """
+    规范化时间列表，返回datetime对象列表
+    增加了更详细的错误处理和日志记录
+    """
+    if not time_list:
+        return []
+
     time_list_normalized = []
+    invalid_times = []
+
     for time_str in time_list:
-        try:
-            if validate_time_format(time_str):
+        time_str = str(time_str).strip()
+
+        if not time_str or time_str in ['', 'nan', 'None']:
+            continue
+
+        if validate_time_format(time_str):
+            try:
                 date_time_obj = datetime.strptime(time_str, '%H:%M')
                 time_list_normalized.append(date_time_obj)
-        except ValueError:
-            continue
-    return time_list_normalized 
+            except ValueError as e:
+                invalid_times.append(f"{time_str} (解析错误: {e})")
+                print(f"⚠️ 时间解析失败: {time_str} - {e}")
+        else:
+            invalid_times.append(f"{time_str} (格式无效)")
+            print(f"⚠️ 时间格式无效: {time_str}")
+
+    if invalid_times:
+        print(f"🚨 发现 {len(invalid_times)} 个无效时间: {invalid_times}")
+
+    print(f"✅ 成功解析 {len(time_list_normalized)} 个有效时间")
+    return time_list_normalized
+
+
+def detect_time_anomalies(raw_time_str, employee_name, column_idx):
+    """
+    检测时间数据异常
+    返回异常类型和详细信息
+    """
+    anomalies = []
+
+    if not raw_time_str or str(raw_time_str).strip() in ['nan', '', 'None']:
+        return anomalies
+
+    raw_time_str = str(raw_time_str).strip()
+
+    # 检测1: 冒号距离异常
+    letter = [x for x in raw_time_str]
+    min_distance = get_minimum_distance(letter)
+    if min_distance == 3:
+        anomalies.append({
+            'type': 'colon_distance',
+            'message': f'冒号距离异常 - 员工: {employee_name}, 列: {column_idx}, 最小距离: {min_distance}',
+            'severity': 'warning'
+        })
+
+    # 检测2: 解析时间
+    time_list = parse_time_string(raw_time_str)
+    valid_times = normalize_time_list(time_list)
+
+    # 检测3: 奇数时间记录
+    if len(valid_times) % 2 != 0:
+        anomalies.append({
+            'type': 'odd_time_count',
+            'message': f'奇数时间记录 - 员工: {employee_name}, 列: {column_idx}, 时间数量: {len(valid_times)}',
+            'severity': 'error'
+        })
+
+    # 检测4: 时间跨度异常
+    if len(valid_times) >= 2:
+        time_span = (valid_times[-1] - valid_times[0]).total_seconds() / 3600
+        if time_span > 16:  # 工作时间跨度超过16小时
+            anomalies.append({
+                'type': 'long_work_span',
+                'message': f'工作时间跨度异常 - 员工: {employee_name}, 列: {column_idx}, 跨度: {time_span:.1f}小时',
+                'severity': 'warning'
+            })
+
+    # 检测5: 时间顺序异常
+    if len(valid_times) >= 2:
+        for i in range(1, len(valid_times)):
+            if valid_times[i] <= valid_times[i - 1]:
+                anomalies.append({
+                    'type': 'time_sequence_error',
+                    'message': f'时间顺序异常 - 员工: {employee_name}, 列: {column_idx}, {valid_times[i - 1].strftime("%H:%M")} >= {valid_times[i].strftime("%H:%M")}',
+                    'severity': 'error'
+                })
+                break
+
+    return anomalies
+
+
+def format_time_for_display(time_list):
+    """
+    格式化时间列表用于显示
+    """
+    if not time_list:
+        return ""
+
+    return " | ".join([t.strftime("%H:%M") if isinstance(t, datetime) else str(t) for t in time_list])
+
+
+def calculate_working_hours_with_details(time_list_normalized):
+    """
+    计算工作时间并返回详细信息
+    """
+    if not time_list_normalized or len(time_list_normalized) == 0:
+        return {
+            'total_hours': 0,
+            'work_periods': [],
+            'is_valid': False,
+            'error': 'No valid times'
+        }
+
+    if len(time_list_normalized) % 2 != 0:
+        return {
+            'total_hours': 0,
+            'work_periods': [],
+            'is_valid': False,
+            'error': f'Odd number of times: {len(time_list_normalized)}'
+        }
+
+    work_periods = []
+    total_hours = 0
+
+    for i in range(0, len(time_list_normalized), 2):
+        start_time = time_list_normalized[i]
+        end_time = time_list_normalized[i + 1]
+
+        period_hours = (end_time - start_time).total_seconds() / 3600
+
+        work_periods.append({
+            'start': start_time.strftime("%H:%M"),
+            'end': end_time.strftime("%H:%M"),
+            'hours': round(period_hours, 2)
+        })
+
+        total_hours += period_hours
+
+    return {
+        'total_hours': round(total_hours, 2),
+        'work_periods': work_periods,
+        'is_valid': True,
+        'error': None
+    }
