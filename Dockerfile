@@ -17,11 +17,16 @@ COPY requirements.txt .
 # 安装Python依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制应用代码
+# 复制应用代码和所有必要文件
 COPY app.py .
+COPY config.py .
+COPY processors/ ./processors/
+COPY utils/ ./utils/
+COPY routes/ ./routes/
+COPY templates/ ./templates/
 
 # 创建必要的目录
-RUN mkdir -p /app/uploads /app/processed
+RUN mkdir -p /app/uploads /app/processed /app/logs
 
 # 暴露端口
 EXPOSE 811
